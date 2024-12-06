@@ -111,6 +111,17 @@ public class KNNScoringSpaceUtil {
         return floatArray;
     }
 
+    public static byte[] parseToByteArray(Object object, int expectedVectorLength, VectorDataType vectorDataType) {
+        byte[] byteArray = convertVectorToByteArray(object, vectorDataType);
+        if (expectedVectorLength != byteArray.length) {
+            KNNCounter.SCRIPT_QUERY_ERRORS.increment();
+            throw new IllegalStateException(
+                    "Object's length=" + byteArray.length + " does not match the " + "expected length=" + expectedVectorLength + "."
+            );
+        }
+        return byteArray;
+    }
+
     /**
      * Converts Object vector to primitive float[]
      *
@@ -129,6 +140,23 @@ public class KNNScoringSpaceUtil {
                     validateByteVectorValue(value, vectorDataType);
                 }
                 primitiveVector[i] = value;
+            }
+        }
+        return primitiveVector;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static byte[] convertVectorToByteArray(Object vector, VectorDataType vectorDataType) {
+        byte[] primitiveVector = null;
+        if (vector != null) {
+            final List<Number> tmp = (List<Number>) vector;
+            primitiveVector = new byte[tmp.size()];
+            for (int i = 0; i < primitiveVector.length; i++) {
+                float value = tmp.get(i).floatValue();
+                if (VectorDataType.BYTE == vectorDataType || VectorDataType.BINARY == vectorDataType) {
+                    validateByteVectorValue(value, vectorDataType);
+                }
+                primitiveVector[i] = tmp.get(i).byteValue();
             }
         }
         return primitiveVector;

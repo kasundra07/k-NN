@@ -6,6 +6,8 @@
 package org.opensearch.knn.plugin.script;
 
 import lombok.Getter;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.IndexSearcher;
 import org.opensearch.index.mapper.MappedFieldType;
@@ -26,13 +28,17 @@ import java.util.function.BiFunction;
 
 import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.getVectorMagnitudeSquared;
 import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.isBinaryFieldType;
+import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.isBinaryVectorDataType;
 import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.isKNNVectorFieldType;
 import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.isLongFieldType;
 import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.parseToBigInteger;
+import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.parseToByteArray;
 import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.parseToFloatArray;
 import static org.opensearch.knn.plugin.script.KNNScoringSpaceUtil.parseToLong;
 
 public interface KNNScoringSpace {
+    public static final Logger logger = LogManager.getLogger(KNNScoringSpace.class);
+
     /**
      * Return the correct scoring script for a given query. The scoring script
      *
@@ -181,25 +187,43 @@ public interface KNNScoringSpace {
         }
     }
 
-    class Hamming extends KNNFieldSpace {
-        private static final Set<VectorDataType> DATA_TYPES_HAMMING = Set.of(VectorDataType.BINARY);
+    class Hamming implements KNNScoringSpace {
+        private byte[] processedQuery;
+        BiFunction<byte[], byte[], Float> scoringMethod;
 
         public Hamming(Object query, MappedFieldType fieldType) {
-            super(query, fieldType, "hamming", DATA_TYPES_HAMMING);
+            if (!isKNNVectorFieldType(fieldType)) {
+                throw new IllegalArgumentException(
+                        "Incompatible field_type for hamming space. The field type must be knn_vector."
+                );
+            }
+            KNNVectorFieldType knnVectorFieldType = (KNNVectorFieldType) fieldType;
+            if (!isBinaryVectorDataType(knnVectorFieldType)){
+                throw new IllegalArgumentException(
+                        String.format(
+                                Locale.ROOT,
+                                "Incompatible field_type for hamming space. The data type should be binary but got %s",
+                                knnVectorFieldType.getVectorDataType()
+                        )
+                );
+            }
+
+            this.processedQuery = parseToByteArray(query, KNNVectorFieldMapperUtil.getExpectedVectorLength(knnVectorFieldType), knnVectorFieldType.getVectorDataType());
+            this.scoringMethod = (byte[] q, byte[] v) -> 1 / (1 + KNNScoringUtil.calculateHammingBit(q, v));
         }
 
         @Override
-        protected BiFunction<float[], float[], Float> getScoringMethod(final float[] processedQuery) {
-            // TODO we want to avoid converting back and forth between byte and float
-            return (float[] q, float[] v) -> 1 / (1 + KNNScoringUtil.calculateHammingBit(toByte(q), toByte(v)));
-        }
-
-        private byte[] toByte(final float[] vector) {
-            byte[] bytes = new byte[vector.length];
-            for (int i = 0; i < vector.length; i++) {
-                bytes[i] = (byte) vector[i];
-            }
-            return bytes;
+        public ScoreScript getScoreScript(
+                Map<String, Object> params,
+                String field,
+                SearchLookup lookup,
+                LeafReaderContext ctx,
+                IndexSearcher searcher
+        ) throws IOException {
+            return new KNNScoreScript.KNNByteVectorType(
+                    params,
+                    this.processedQuery,
+                    field, this.scoringMethod, lookup, ctx, searcher);
         }
     }
 
