@@ -526,6 +526,9 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
                 throw validationException;
             }
 
+            // Validate Faiss engine specific constraints
+            validateFaissEngineConstraints(builder);
+
             if (builder.originalParameters.getResolvedKnnMethodContext() != null) {
                 validationException = builder.originalParameters.getResolvedKnnMethodContext().validate(builder.knnMethodConfigContext);
                 if (validationException != null) {
@@ -538,6 +541,28 @@ public abstract class KNNVectorFieldMapper extends ParametrizedFieldMapper {
         private void validateDimensionSet(KNNVectorFieldMapper.Builder builder) {
             if (builder.dimension.getValue() == UNSET_MODEL_DIMENSION_IDENTIFIER) {
                 throw new IllegalArgumentException(String.format(Locale.ROOT, "Dimension value missing for vector: %s", builder.name()));
+            }
+        }
+
+        private void validateFaissEngineConstraints(KNNVectorFieldMapper.Builder builder) {
+            KNNMethodContext knnMethodContext = builder.originalParameters.getResolvedKnnMethodContext();
+            if (knnMethodContext == null) {
+                return;
+            }
+
+            // Faiss doesn't support cosine similarity with byte vectors because cosine similarity
+            // requires vector normalization which can only be done with float vectors
+            if (knnMethodContext.getKnnEngine() == KNNEngine.FAISS
+                && knnMethodContext.getSpaceType() == SpaceType.COSINESIMIL
+                && builder.vectorDataType.getValue() == VectorDataType.BYTE) {
+                throw new IllegalArgumentException(
+                    String.format(
+                        Locale.ROOT,
+                        "Faiss engine does not support cosine similarity with byte vectors. "
+                            + "Cosine similarity requires vector normalization which is only supported for float vectors. "
+                            + "Please use float data type or choose a different space type like l2 or inner_product."
+                    )
+                );
             }
         }
 
